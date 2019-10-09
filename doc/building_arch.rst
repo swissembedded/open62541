@@ -139,3 +139,13 @@ And lastly, in the same file (or any actually) add:
 And put a breakpoint in each of the vTaskDelay. These functions are called when there's a problem in the heap or the stack. If the program gets here, you have a memory problem.
 
 That's it. Your OPC UA server should run smoothly. If not, as said before, check the discussion in https://github.com/open62541/open62541/pull/2511. If you still have problems, ask there so the discussion remains centralized.
+
+
+-----
+Same procedure applies with UA_ARCHITECTURE_FREERTOSTCP if you choose to use freertos plus tcp
+.. code-block:: bash
+
+	mkdir build_freeRTOS
+	cd build_freeRTOS
+	cmake -DUA_ARCHITECTURE=freertosTCP -DUA_ENABLE_AMALGAMATION=ON ../
+	make 
