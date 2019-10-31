@@ -66,7 +66,11 @@ connection_write(UA_Connection *connection, UA_ByteString *buf) {
             n = UA_send(connection->sockfd,
                      (const char*)buf->data + nWritten,
                      bytes_to_send, flags);
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+            if(n < 0 && n != (-pdFREERTOS_ERRNO_ENOSPC)) {
+#else
             if(n < 0 && UA_ERRNO != UA_INTERRUPTED && UA_ERRNO != UA_AGAIN) {
+#endif
                 connection->close(connection);
                 UA_ByteString_deleteMembers(buf);
                 return UA_STATUSCODE_BADCONNECTIONCLOSED;
@@ -100,11 +104,17 @@ connection_recv(UA_Connection *connection, UA_ByteString *response,
         /* No result */
         if(resultsize == 0)
             return UA_STATUSCODE_GOODNONCRITICALTIMEOUT;
-
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+        if(resultsize < 0) {
+            /* The call to select was interrupted manually. Act as if it timed
+             * out */
+            if( resultsize== ( -pdFREERTOS_ERRNO_EINTR ) )
+#else
         if(resultsize == -1) {
             /* The call to select was interrupted manually. Act as if it timed
              * out */
             if(UA_ERRNO == EINTR)
+#endif
                 return UA_STATUSCODE_GOODNONCRITICALTIMEOUT;
 
             /* The error cannot be recovered. Close the connection. */
@@ -142,9 +152,15 @@ connection_recv(UA_Connection *connection, UA_ByteString *response,
     /* Error case */
     if(ret < 0) {
         UA_ByteString_deleteMembers(response);
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+        if(ret == (-pdFREERTOS_ERRNO_EINTR) || (timeout > 0) ?
+           false : (ret == (-pdFREERTOS_ERRNO_ENOMEM) || ret == (-pdFREERTOS_ERRNO_ENOTCONN )))
+            return UA_STATUSCODE_GOOD; /* statuscode_good but no data -> retry */
+#else
         if(UA_ERRNO == UA_INTERRUPTED || (timeout > 0) ?
            false : (UA_ERRNO == UA_EAGAIN || UA_ERRNO == UA_WOULDBLOCK))
             return UA_STATUSCODE_GOOD; /* statuscode_good but no data -> retry */
+#endif
         connection->close(connection);
         return UA_STATUSCODE_BADCONNECTIONCLOSED;
     }
@@ -639,8 +655,13 @@ UA_StatusCode UA_ClientConnectionTCP_poll(UA_Client *client, void *data) {
     }
 
     if(clientsockfd == UA_INVALID_SOCKET) {
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+	UA_LOG_WARNING(&config->logger, UA_LOGCATEGORY_NETWORK,
+                       "Could not create client socket");
+#else
         UA_LOG_WARNING(&config->logger, UA_LOGCATEGORY_NETWORK,
                        "Could not create client socket: %s", strerror(UA_ERRNO));
+#endif
         ClientNetworkLayerTCP_close(connection);
         return UA_STATUSCODE_BADDISCONNECT;
     }
@@ -656,18 +677,27 @@ UA_StatusCode UA_ClientConnectionTCP_poll(UA_Client *client, void *data) {
     /* Non blocking connect */
     int error = UA_connect(clientsockfd, tcpConnection->server->ai_addr,
                     tcpConnection->server->ai_addrlen);
-
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+    if ((error < 0) && (error != (-pdFREERTOS_ERRNO_EINPROGRESS) )) {
+            ClientNetworkLayerTCP_close(connection);
+            UA_LOG_WARNING(&config->logger, UA_LOGCATEGORY_NETWORK,
+                           "Connection to  failed with error");
+#else
     if ((error == -1) && (UA_ERRNO != UA_ERR_CONNECTION_PROGRESS)) {
             ClientNetworkLayerTCP_close(connection);
             UA_LOG_WARNING(&config->logger, UA_LOGCATEGORY_NETWORK,
                            "Connection to  failed with error: %s", strerror(UA_ERRNO));
+#endif
             return UA_STATUSCODE_BADDISCONNECT;
     }
 
     /* Use select to wait and check if connected */
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+	if (error == (-pdFREERTOS_ERRNO_EINPROGRESS)) {
+#else
     if (error == -1 && (UA_ERRNO == UA_ERR_CONNECTION_PROGRESS)) {
+#endif
         /* connection in progress. Wait until connected using select */
-
         UA_UInt32 timeSinceStart = (UA_UInt32)
             ((UA_Double) (UA_DateTime_nowMonotonic() - connStart) / UA_DATETIME_MSEC);
 #ifdef _OS9000
@@ -688,10 +718,17 @@ UA_StatusCode UA_ClientConnectionTCP_poll(UA_Client *client, void *data) {
             _os_sleep(&time,&sig);
             error = connect(clientsockfd, tcpConnection->server->ai_addr,
                         tcpConnection->server->ai_addrlen);
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+            if ((error == (-pdFREERTOS_ERRNO_EISCONN)) || (error == 0))
+                resultsize = 1;
+            if (error == (-pdFREERTOS_ERRNO_EINPROGRESS))
+                break;
+#else
             if ((error == -1 && UA_ERRNO == EISCONN) || (error == 0))
                 resultsize = 1;
             if (error == -1 && UA_ERRNO != EALREADY && UA_ERRNO != EINPROGRESS)
                 break;
+#endif
         }
         while(resultsize == 0);
 #else
@@ -908,8 +945,11 @@ UA_ClientConnectionTCP(UA_ConnectionConfig config, const UA_String endpointUrl,
 
         /* Non blocking connect */
         error = UA_connect(clientsockfd, server->ai_addr, (socklen_t)server->ai_addrlen);
-
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+        if ((error < 0) && (error != (-pdFREERTOS_ERRNO_EINPROGRESS))) {
+#else
         if ((error == -1) && (UA_ERRNO != UA_ERR_CONNECTION_PROGRESS)) {
+#endif
             ClientNetworkLayerTCP_close(&connection);
             UA_LOG_SOCKET_ERRNO_WRAP(
                     UA_LOG_WARNING(logger, UA_LOGCATEGORY_NETWORK,
@@ -920,7 +960,11 @@ UA_ClientConnectionTCP(UA_ConnectionConfig config, const UA_String endpointUrl,
         }
 
         /* Use select to wait and check if connected */
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+        if (error == (-pdFREERTOS_ERRNO_EINPROGRESS)) {
+#else
         if (error == -1 && (UA_ERRNO == UA_ERR_CONNECTION_PROGRESS)) {
+#endif
             /* connection in progress. Wait until connected using select */
             UA_DateTime timeSinceStart = UA_DateTime_nowMonotonic() - connStart;
             if(timeSinceStart > dtTimeout)
@@ -942,10 +986,17 @@ UA_ClientConnectionTCP(UA_ConnectionConfig config, const UA_String endpointUrl,
 
                 _os_sleep(&time,&sig);
                 error = connect(clientsockfd, server->ai_addr, server->ai_addrlen);
+#ifdef UA_ARCHITECTURE_FREERTOSTCP
+                if ((error == (-pdFREERTOS_ERRNO_EISCONN)) || (error == 0))
+                    resultsize = 1;
+                if (error < 0 && (error != (-pdFREERTOS_ERRNO_EINPROGRESS)))
+                    break;
+#else
                 if ((error == -1 && UA_ERRNO == EISCONN) || (error == 0))
                     resultsize = 1;
                 if (error == -1 && UA_ERRNO != EALREADY && UA_ERRNO != EINPROGRESS)
                     break;
+#endif
             }
             while(resultsize == 0);
 #else
@@ -960,8 +1011,8 @@ UA_ClientConnectionTCP(UA_ConnectionConfig config, const UA_String endpointUrl,
 #endif
 
             if(resultsize == 1) {
-#ifdef _WIN32
-                /* Windows does not have any getsockopt equivalent and it is not
+#if defined (_WIN32) || defined(UA_ARCHITECTURE_FREERTOSTCP)
+                /* Windows / FreeRTOS PLUS TCP does not have any getsockopt equivalent and it is not
                  * needed there */
                 connected = true;
                 break;

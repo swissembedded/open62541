@@ -8,8 +8,13 @@
 #ifndef ARCH_COMMON_FREERTOSTCP62541_H_
 #define ARCH_COMMON_FREERTOSTCP62541_H_
 
- 
-#include "FreeRTOS_sockets.h"
+/* Add your includes in the following config file, for example on PIC32 INFINITY is not included in math.h
+#include <FreeRTOS.h>
+#include <FreeRTOS_Sockets.h>
+#include <FreeRTOS_IP.h>
+*/
+
+#include <Open62541Config.h>
 
 #define OPTVAL_TYPE int
 
@@ -17,13 +22,15 @@
 #define UA_fd_isset(fd, fds) FD_ISSET((unsigned int)fd, fds)
 
 #define UA_SOCKET Socket_t
-#define UA_INVALID_SOCKET FREERTOS_INVALID_SOCKET 
-#define UA_ERRNO errno
-#define UA_INTERRUPTED EINTR
-#define UA_AGAIN EAGAIN
-#define UA_EAGAIN EAGAIN
-#define UA_WOULDBLOCK EWOULDBLOCK
-#define UA_ERR_CONNECTION_PROGRESS EINPROGRESS
+#define UA_INVALID_SOCKET (-FREERTOS_INVALID_SOCKET)
+
+/* FreeRTOS TCP does not support errno */
+//#define UA_ERRNO errno
+//#define UA_INTERRUPTED EINTR
+//#define UA_AGAIN EAGAIN
+//#define UA_EAGAIN EAGAIN
+//#define UA_WOULDBLOCK EWOULDBLOCK
+//#define UA_ERR_CONNECTION_PROGRESS EINPROGRESS
 
 #define UA_send FreeRTOS_send
 #define UA_recv FreeRTOS_recv
@@ -50,13 +57,13 @@
   #error "IPV6 is still in experimental state, not supported yet by FreeRTOS TCP"
 #else
 # define UA_inet_pton(af, src, dst) \
-     if((af) == AF_INET)
-     {
-      *(dst)=FreeRTOS_inet_addr(src);
-     }
-     else
-     {
-         *(dst)=0;
+     if((af) == AF_INET) \
+     { \
+      *(dst)=FreeRTOS_inet_addr(src); \
+     } \
+     else \
+     { \
+         *(dst)=0; \
      }
 #endif
 
